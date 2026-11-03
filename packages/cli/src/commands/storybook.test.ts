@@ -6,7 +6,9 @@ import {
   parseGlobals,
   parseViewports,
   planCaptures,
+  type SettleOptions,
   type Story,
+  settleStory,
   shardStories,
   storybookCommand,
   storySnapshotName,
@@ -187,7 +189,86 @@ it("refuses --shard auto, which cannot split stories", async () => {
       shard: { index: null, total: null },
       viewports: [1280],
       waitForSelector: "#storybook-root",
+      waitForNetworkIdle: true,
       delay: 0,
     } as Parameters<typeof storybookCommand>[1]),
   ).rejects.toThrow(/--shard i\/n/);
+});
+
+function fakePage(networkIdle: () => Promise<void> = async () => {}) {
+  const calls: string[] = [];
+  const page = {
+    waitForSelector: async (selector: string) => {
+      calls.push(`selector ${selector}`);
+      return null;
+    },
+    evaluate: async (expression: string) => {
+      calls.push(
+        expression.includes("requestAnimationFrame")
+          ? "two frames"
+          : expression,
+      );
+    },
+    waitForLoadState: async (state: string) => {
+      calls.push(state);
+      await networkIdle();
+    },
+    waitForTimeout: async (ms: number) => {
+      calls.push(`delay ${ms}`);
+    },
+  } as unknown as Parameters<typeof settleStory>[0];
+  return { page, calls };
+}
+
+const settle: SettleOptions = {
+  waitForSelector: "#storybook-root > *",
+  waitForNetworkIdle: true,
+  delay: 0,
+};
+
+it("waits for fonts, the network and two frames, then the delay", async () => {
+  const { page, calls } = fakePage();
+  await settleStory(page, "Diff/Pane", { ...settle, delay: 200 });
+  expect(calls).toEqual([
+    "selector #storybook-root > *",
+    "document.fonts.ready",
+    "networkidle",
+    "two frames",
+    "delay 200",
+  ]);
+});
+
+it("skips the network wait with --no-wait-for-network-idle", async () => {
+  const { page, calls } = fakePage();
+  await settleStory(page, "Diff/Pane", {
+    ...settle,
+    waitForNetworkIdle: false,
+  });
+  expect(calls).not.toContain("networkidle");
+  expect(calls).toContain("two frames");
+});
+
+it("warns and captures anyway when the network never goes idle", async () => {
+  const { page, calls } = fakePage(async () => {
+    const error = new Error("Timeout 5000ms exceeded.");
+    error.name = "TimeoutError";
+    throw error;
+  });
+  const warnings: string[] = [];
+  await settleStory(page, "Live/Polling", settle, (message) =>
+    warnings.push(message),
+  );
+  expect(warnings).toEqual([
+    "stateofpixel  Live/Polling: network still busy after 5s, capturing anyway",
+  ]);
+  expect(calls.at(-1)).toBe("two frames");
+});
+
+it("fails the story on other network wait errors", async () => {
+  const { page } = fakePage(async () => {
+    throw new Error("Target page, context or browser has been closed");
+  });
+  await expect(
+    settleStory(page, "Diff/Pane", settle, () => {}),
+  ).rejects.toThrow("has been closed");
 });

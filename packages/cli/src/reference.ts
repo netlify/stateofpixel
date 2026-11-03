@@ -132,6 +132,11 @@ export const COMMANDS: CommandSpec[] = [
         default: "#storybook-root > *",
       },
       {
+        flags: "--no-wait-for-network-idle",
+        description:
+          "do not wait for network requests to settle before each screenshot",
+      },
+      {
         flags: "--delay <ms>",
         description: "wait this long before each screenshot",
         default: 0,

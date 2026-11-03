@@ -12,7 +12,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { InvalidArgumentError } from "commander";
-import type { Browser, BrowserContext } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
 import { mapConcurrent } from "../map-concurrent";
 import { ENV } from "../reference";
 import { metadataFile, type Shard } from "../upload";
@@ -20,6 +20,7 @@ import { parseShard, type UploadCommandOptions, uploadCommand } from "./upload";
 
 const CAPTURE_CONCURRENCY = 4;
 const STORY_TIMEOUT_MS = 15_000;
+const NETWORK_IDLE_TIMEOUT_MS = 5_000;
 const PARAMETERS_TIMEOUT_MS = 60_000;
 const VIEWPORT_HEIGHT = 720;
 
@@ -47,6 +48,7 @@ export type StorybookCommandOptions = UploadCommandOptions & {
   globals?: string;
   chromatic: boolean;
   waitForSelector: string;
+  waitForNetworkIdle: boolean;
   delay: number;
   deviceScaleFactor: number;
 };
@@ -129,7 +131,10 @@ export async function storybookCommand(
         storybook,
         outDir,
         captures,
-        options.waitForSelector,
+        {
+          waitForSelector: options.waitForSelector,
+          waitForNetworkIdle: options.waitForNetworkIdle !== false,
+        },
         options.deviceScaleFactor,
       );
       console.log(
@@ -406,11 +411,57 @@ async function readChromaticParameters(
   }
 }
 
+export type SettleOptions = {
+  waitForSelector: string;
+  waitForNetworkIdle: boolean;
+  delay: number;
+};
+
+type SettlePage = Pick<
+  Page,
+  "waitForSelector" | "evaluate" | "waitForLoadState" | "waitForTimeout"
+>;
+
+// Waits until a story looks finished: its root rendered, fonts loaded, lazy
+// chunks and mocked fetches settled, and the framework committed the result.
+export async function settleStory(
+  page: SettlePage,
+  name: string,
+  options: SettleOptions,
+  warn: (message: string) => void = console.warn,
+): Promise<void> {
+  await page.waitForSelector(options.waitForSelector, {
+    timeout: STORY_TIMEOUT_MS,
+  });
+  await page.evaluate("document.fonts.ready");
+  if (options.waitForNetworkIdle) {
+    try {
+      await page.waitForLoadState("networkidle", {
+        timeout: NETWORK_IDLE_TIMEOUT_MS,
+      });
+    } catch (error) {
+      if (!(error instanceof Error && error.name === "TimeoutError")) {
+        throw error;
+      }
+      warn(
+        `stateofpixel  ${name}: network still busy after ${NETWORK_IDLE_TIMEOUT_MS / 1000}s, capturing anyway`,
+      );
+    }
+  }
+  // Two frames, so a framework commits what the finished requests rendered.
+  await page.evaluate(
+    "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+  );
+  if (options.delay > 0) {
+    await page.waitForTimeout(options.delay);
+  }
+}
+
 async function captureStories(
   storybook: Storybook,
   outDir: string,
   captures: Capture[],
-  waitForSelector: string,
+  settle: Omit<SettleOptions, "delay">,
   deviceScaleFactor: number,
 ): Promise<string[]> {
   const failed: string[] = [];
@@ -430,13 +481,7 @@ async function captureStories(
         await page.goto(storyUrl(storybook.baseUrl, story, globals), {
           timeout: STORY_TIMEOUT_MS,
         });
-        await page.waitForSelector(waitForSelector, {
-          timeout: STORY_TIMEOUT_MS,
-        });
-        await page.evaluate("document.fonts.ready");
-        if (delay > 0) {
-          await page.waitForTimeout(delay);
-        }
+        await settleStory(page, name, { ...settle, delay });
         await mkdir(path.dirname(file), { recursive: true });
         await page.screenshot({
           path: file,

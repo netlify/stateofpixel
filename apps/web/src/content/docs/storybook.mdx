@@ -42,9 +42,9 @@ npx stateofpixel storybook storybook-static \
   --device-scale-factor 2
 ```
 
-<CliOptions name="storybook" only={["--viewports", "--include", "--exclude", "--tag", "--wait-for-selector", "--delay", "--device-scale-factor"]} />
+<CliOptions name="storybook" only={["--viewports", "--include", "--exclude", "--tag", "--wait-for-selector", "--no-wait-for-network-idle", "--delay", "--device-scale-factor"]} />
 
-Each story opens in Chromium at a height of 720px, with reduced motion and the device scale factor from `--device-scale-factor`, and the screenshot covers the full page. A story has 15 seconds to load and to match `--wait-for-selector`. When a story does not render, the command lists it and stops before anything uploads.
+Each story opens in Chromium at a height of 720px, with reduced motion and the device scale factor from `--device-scale-factor`, and the screenshot covers the full page. A story has 15 seconds to load and to match `--wait-for-selector`. Then the command waits for web fonts, for the network to go idle, so lazy components, code-split chunks and mocked fetches finish, and for two animation frames, so the framework renders what they returned. `--delay` comes after these waits. A story that keeps a request open, like one that polls, gets 5 seconds for the network: after that the command prints a warning naming the story and takes the screenshot anyway. Use `--no-wait-for-network-idle` to skip the network wait. When a story does not render, the command lists it and stops before anything uploads.
 
 In `--include` and `--exclude`, `*` stays inside one segment of `Title/Name` and `**` crosses segments.
 

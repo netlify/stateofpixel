@@ -32,7 +32,7 @@ test("dashboard", async ({ page }) => {
 - Fix the clock with `page.clock` so dates and relative times do not change.
 - Wait for the content you want, not for a fixed time.
 - Replace random or live data, like avatars, ads and charts of today's numbers, with fixed test data, or hide it with CSS before the screenshot.
-- For Storybook, use `--wait-for-selector` and `--delay` for stories that render late.
+- For Storybook, the command already waits for fonts and for the network to go idle, so lazy-loaded content renders before the screenshot. Use `--wait-for-selector` and `--delay` for stories that still render late.
 
 ## Tune the threshold
 
